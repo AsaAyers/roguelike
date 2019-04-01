@@ -1,0 +1,7 @@
+[package]
+name = "roguelike"
+version = "0.1.0"
+authors = ["Asa Ayers <Asa@AsaAyers.com>"]
+edition = "2018"
+
+[dependencies]
