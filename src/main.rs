@@ -25,6 +25,9 @@ const FOV_ALGO: FovAlgorithm = FovAlgorithm::Basic;
 const FOV_LIGHT_WALLS: bool = true;
 const TORCH_RADIUS: i32 = 10;
 
+const FIREBALL_RADIUS: i32 = 3;
+const FIREBALL_DAMAGE: i32 = 12;
+
 const CONFUSE_RANGE: i32 = 8;
 const CONFUSE_NUM_TURNS: i32 = 10;
 const LIGHTNING_RANGE: i32 = 5;
@@ -138,6 +141,7 @@ enum Item {
     Heal,
     Lightning,
     Confuse,
+    Fireball,
 }
 
 enum UseResult {
@@ -195,10 +199,13 @@ impl Object {
         self.y = y;
     }
 
-    pub fn distance_to(&self, other: &Object) -> f32 {
-        let dx = other.x - self.x;
-        let dy = other.y - self.y;
+    pub fn distance(&self, x: i32, y: i32) -> f32 {
+        let dx = x - self.x;
+        let dy = y - self.y;
         ((dx.pow(2) + dy.pow(2)) as f32).sqrt()
+    }
+    pub fn distance_to(&self, other: &Object) -> f32 {
+        self.distance(other.x, other.y)
     }
 
     pub fn take_damage(&mut self, messages: &mut Messages, damage: i32) {
@@ -333,10 +340,54 @@ fn player_move_or_attack(
     }
 }
 
+fn cast_fireball(
+    _inventory_id: usize,
+    objects: &mut [Object],
+    messages: &mut Messages,
+    map: &mut Map,
+    tcod: &mut Tcod,
+) -> UseResult {
+    // ask the player for a target tile to throw a fireball at
+    message(
+        messages,
+        "Left-click a target tile for the fireball, or right-click to cancel.",
+        colors::LIGHT_CYAN,
+    );
+    let (x, y) = match tcod.target_tile(objects, map, messages, None) {
+        Some(tile_pos) => tile_pos,
+        None => return UseResult::Cancelled,
+    };
+    message(
+        messages,
+        format!(
+            "The fireball explodes, burning everything within {} tiles!",
+            FIREBALL_RADIUS
+        ),
+        colors::ORANGE,
+    );
+
+    for obj in objects {
+        if obj.distance(x, y) <= FIREBALL_RADIUS as f32 && obj.fighter.is_some() {
+            message(
+                messages,
+                format!(
+                    "The {} gets burned for {} hit points.",
+                    obj.name, FIREBALL_DAMAGE
+                ),
+                colors::ORANGE,
+            );
+            obj.take_damage(messages, FIREBALL_DAMAGE);
+        }
+    }
+
+    UseResult::UsedUp
+}
+
 fn cast_confuse(
     _inventory_id: usize,
     objects: &mut [Object],
     messages: &mut Messages,
+    map: &mut Map,
     tcod: &mut Tcod,
 ) -> UseResult {
     // find closest enemy in-range and confuse it
@@ -369,6 +420,7 @@ fn cast_lightning(
     _inventory_id: usize,
     objects: &mut [Object],
     messages: &mut Messages,
+    map: &mut Map,
     tcod: &mut Tcod,
 ) -> UseResult {
     // find closest enemy (inside a maximum range) and damage it
@@ -417,6 +469,7 @@ fn cast_heal(
     _inventory_id: usize,
     objects: &mut [Object],
     messages: &mut Messages,
+    map: &mut Map,
     _tcod: &mut Tcod,
 ) -> UseResult {
     if let Some(fighter) = objects[PLAYER].fighter {
@@ -583,7 +636,7 @@ fn place_objects(room: Rect, map: &Map, objects: &mut Vec<Object>) {
                 let mut object = Object::new(x, y, '!', "Healing Potion", colors::VIOLET, false);
                 object.item = Some(Item::Heal);
                 object
-            } else if dice < 0.7 + 0.15 {
+            } else if dice < 0.7 + 0.1 {
                 let mut object = Object::new(
                     x,
                     y,
@@ -593,6 +646,12 @@ fn place_objects(room: Rect, map: &Map, objects: &mut Vec<Object>) {
                     false,
                 );
                 object.item = Some(Item::Lightning);
+                object
+            } else if dice < 0.7 + 0.1 + 0.1 {
+                // create a fireball scroll (10% chance)
+                let mut object =
+                    Object::new(x, y, '#', "scroll of fireball", colors::LIGHT_YELLOW, false);
+                object.item = Some(Item::Fireball);
                 object
             } else {
                 // create a confuse scroll (15% chance)
@@ -827,7 +886,7 @@ fn main() {
         let player_action = handle_keys(
             key,
             &mut tcod,
-            &map,
+            &mut map,
             &mut objects,
             &mut inventory,
             &mut messages,
@@ -859,6 +918,43 @@ fn get_names_under_mouse(tcod: &Tcod, objects: &[Object]) -> String {
 }
 
 impl Tcod {
+    pub fn target_tile(
+        self: &mut Tcod,
+        objects: &[Object],
+        map: &mut Map,
+        messages: &Messages,
+        max_range: Option<f32>,
+    ) -> Option<(i32, i32)> {
+        use tcod::input::KeyCode::Escape;
+        loop {
+            self.root.flush();
+
+            let event = input::check_for_event(input::KEY_PRESS | input::MOUSE).map(|e| e.1);
+            let mut key = None;
+            match event {
+                Some(Event::Mouse(m)) => self.mouse = m,
+                Some(Event::Key(k)) => key = Some(k),
+                None => {}
+            }
+            render_all(self, objects, map, messages, false);
+
+            let (x, y) = (self.mouse.cx as i32, self.mouse.cy as i32);
+
+            // accept the target if the player clicked in FOV, and in case a range
+            // is specified, if it's in that range
+            let in_fov = (x < MAP_WIDTH) && (y < MAP_HEIGHT) && self.fov.is_in_fov(x, y);
+            let in_range = max_range.map_or(true, |range| objects[PLAYER].distance(x, y) <= range);
+            if self.mouse.lbutton_pressed && in_fov && in_range {
+                return Some((x, y));
+            }
+
+            let escape = key.map_or(false, |k| k.code == Escape);
+            if self.mouse.rbutton_pressed || escape {
+                return None; // cancel if the player right-clicked or pressed Escape
+            }
+        }
+    }
+
     pub fn menu<T: AsRef<str>>(
         self: &mut Tcod,
         header: &str,
@@ -990,6 +1086,7 @@ fn use_item(
     inventory: &mut Vec<Object>,
     objects: &mut [Object],
     messages: &mut Messages,
+    map: &mut Map,
     tcod: &mut Tcod,
 ) {
     use Item::*;
@@ -999,9 +1096,10 @@ fn use_item(
             Heal => cast_heal,
             Lightning => cast_lightning,
             Confuse => cast_confuse,
+            Fireball => cast_fireball,
         };
 
-        match on_use(inventory_id, objects, messages, tcod) {
+        match on_use(inventory_id, objects, messages, map, tcod) {
             UseResult::UsedUp => {
                 inventory.remove(inventory_id);
             }
@@ -1021,7 +1119,7 @@ fn use_item(
 fn handle_keys(
     key: Key,
     tcod: &mut Tcod,
-    map: &Map,
+    map: &mut Map,
     objects: &mut Vec<Object>,
     inventory: &mut Vec<Object>,
     messages: &mut Messages,
@@ -1050,7 +1148,7 @@ fn handle_keys(
                 "Press the key next to an item to use it, or any other to cancel.\n",
             );
             if let Some(inventory_index) = inventory_index {
-                use_item(inventory_index, inventory, objects, messages, tcod);
+                use_item(inventory_index, inventory, objects, messages, map, tcod);
                 TookTurn
             } else {
                 DidntTakeTurn
