@@ -680,73 +680,90 @@ fn get_names_under_mouse(mouse: Mouse, objects: &[Object], fov_map: &FovMap) -> 
     names.join(", ")
 }
 
-fn menu<T: AsRef<str>>(header: &str, options: &[T], width: i32, root: &mut Root) -> Option<usize> {
-    assert!(
-        options.len() <= 26,
-        "Cannot have a menu with more than 26 options"
-    );
+impl Tcod {
+    pub fn menu<T: AsRef<str>>(
+        self: &mut Tcod,
+        header: &str,
+        options: &[T],
+        width: i32,
+    ) -> Option<usize> {
+        assert!(
+            options.len() <= 26,
+            "Cannot have a menu with more than 26 options"
+        );
 
-    // calculate total height for the header (after auto-wrap) and one line per option
-    let header_height = root.get_height_rect(0, 0, width, SCREEN_HEIGHT, header);
-    let height = options.len() as i32 + header_height;
+        // calculate total height for the header (after auto-wrap) and one line per option
+        let header_height = self
+            .root
+            .get_height_rect(0, 0, width, SCREEN_HEIGHT, header);
+        let height = options.len() as i32 + header_height;
 
-    // create an off-screen console that represents the menu's window
-    let mut window = Offscreen::new(width, height);
+        // create an off-screen console that represents the menu's window
+        let mut window = Offscreen::new(width, height);
 
-    // print the header, with auto-wrap
-    window.set_default_foreground(colors::WHITE);
-    window.print_rect_ex(
-        0,
-        0,
-        width,
-        height,
-        BackgroundFlag::None,
-        TextAlignment::Left,
-        header,
-    );
-
-    for (index, option_text) in options.iter().enumerate() {
-        let menu_letter = (b'a' + index as u8) as char;
-        let text = format!("({}) {}", menu_letter, option_text.as_ref());
-        window.print_ex(
+        // print the header, with auto-wrap
+        window.set_default_foreground(colors::WHITE);
+        window.print_rect_ex(
             0,
-            header_height + index as i32,
+            0,
+            width,
+            height,
             BackgroundFlag::None,
             TextAlignment::Left,
-            text,
+            header,
         );
-    }
 
-    // blit the contents of "window" to the root console
-    let x = SCREEN_WIDTH / 2 - width / 2;
-    let y = SCREEN_HEIGHT / 2 - height / 2;
-    tcod::console::blit(&window, (0, 0), (width, height), root, (x, y), 1.0, 0.7);
+        for (index, option_text) in options.iter().enumerate() {
+            let menu_letter = (b'a' + index as u8) as char;
+            let text = format!("({}) {}", menu_letter, option_text.as_ref());
+            window.print_ex(
+                0,
+                header_height + index as i32,
+                BackgroundFlag::None,
+                TextAlignment::Left,
+                text,
+            );
+        }
 
-    // present the root console to the player and wait for a key-press
-    root.flush();
-    let key = root.wait_for_keypress(true);
+        // blit the contents of "window" to the root console
+        let x = SCREEN_WIDTH / 2 - width / 2;
+        let y = SCREEN_HEIGHT / 2 - height / 2;
+        tcod::console::blit(
+            &window,
+            (0, 0),
+            (width, height),
+            &mut self.root,
+            (x, y),
+            1.0,
+            0.7,
+        );
 
-    // convert the ASCII code to an index; if it corresponds to an option, return it
-    if key.printable.is_alphabetic() {
-        let index = key.printable.to_ascii_lowercase() as usize - 'a' as usize;
-        if index < options.len() {
-            Some(index)
+        // present the root console to the player and wait for a key-press
+        self.root.flush();
+        let key = self.root.wait_for_keypress(true);
+
+        // convert the ASCII code to an index; if it corresponds to an option, return it
+        if key.printable.is_alphabetic() {
+            let index = key.printable.to_ascii_lowercase() as usize - 'a' as usize;
+            if index < options.len() {
+                Some(index)
+            } else {
+                None
+            }
         } else {
             None
         }
-    } else {
-        None
     }
 }
 
-fn inventory_menu(inventory: &[Object], header: &str, root: &mut Root) -> Option<usize> {
+fn inventory_menu(tcod: &mut Tcod, inventory: &[Object], header: &str) -> Option<usize> {
     let options = if inventory.len() == 0 {
         vec!["inventory is empty".into()]
     } else {
         inventory.iter().map(|item| item.name.clone()).collect()
     };
 
-    let inventory_index = menu(header, &options, INVENTORY_WIDTH, root);
+    let inventory_index = tcod.menu(header, &options, INVENTORY_WIDTH);
 
     if inventory.len() > 0 {
         inventory_index
@@ -813,9 +830,9 @@ fn handle_keys(
         }
         (Key { printable: 'i', .. }, true) => {
             let inventory_index = inventory_menu(
+                tcod,
                 inventory,
                 "Press the key next to an item to use it, or any other to cancel.\n",
-                &mut tcod.root,
             );
             if let Some(inventory_index) = inventory_index {
                 use_item(inventory_index, inventory, objects, messages);
