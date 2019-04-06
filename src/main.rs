@@ -630,11 +630,11 @@ fn ai_take_turn(
     map: &Map,
     messages: &mut Messages,
     objects: &mut [Object],
-    fov_map: &FovMap,
+    tcod: &Tcod,
 ) {
     // a basic monster takes its turn. If you can see it, it can see you
     let (monster_x, monster_y) = objects[monster_id].pos();
-    if fov_map.is_in_fov(monster_x, monster_y) {
+    if tcod.fov.is_in_fov(monster_x, monster_y) {
         if objects[monster_id].distance_to(&objects[PLAYER]) >= 2.0 {
             // move towards player if far away
             let (player_x, player_y) = objects[PLAYER].pos();
@@ -687,10 +687,9 @@ fn main() {
     let mut mouse = Default::default();
     let mut key = Default::default();
 
-    let mut fov_map = FovMap::new(MAP_WIDTH, MAP_HEIGHT);
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
-            fov_map.set(
+            tcod.fov.set(
                 x,
                 y,
                 !map[x as usize][y as usize].block_sight,
@@ -734,19 +733,19 @@ fn main() {
         if objects[PLAYER].alive && player_action != PlayerAction::DidntTakeTurn {
             for id in 0..objects.len() {
                 if objects[id].ai.is_some() {
-                    ai_take_turn(id, &map, &mut messages, &mut objects, &fov_map);
+                    ai_take_turn(id, &map, &mut messages, &mut objects, &tcod);
                 }
             }
         }
     }
 }
 
-fn get_names_under_mouse(mouse: Mouse, objects: &[Object], fov_map: &FovMap) -> String {
-    let (x, y) = (mouse.cx as i32, mouse.cy as i32);
+fn get_names_under_mouse(tcod: &Tcod, objects: &[Object]) -> String {
+    let (x, y) = (tcod.mouse.cx as i32, tcod.mouse.cy as i32);
 
     let names = objects
         .iter()
-        .filter(|obj| obj.pos() == (x, y) && fov_map.is_in_fov(obj.x, obj.y))
+        .filter(|obj| obj.pos() == (x, y) && tcod.fov.is_in_fov(obj.x, obj.y))
         .map(|obj| obj.name.clone())
         .collect::<Vec<_>>();
 
@@ -1059,7 +1058,7 @@ fn render_all(
         0,
         BackgroundFlag::None,
         TextAlignment::Left,
-        get_names_under_mouse(tcod.mouse, objects, &tcod.fov),
+        get_names_under_mouse(tcod, objects),
     );
 
     let mut y = MSG_HEIGHT as i32;
