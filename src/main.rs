@@ -1,3 +1,4 @@
+#![allow(clippy::ptr_arg)]
 extern crate rand;
 extern crate tcod;
 
@@ -684,7 +685,6 @@ fn main() {
     let mut objects = vec![player];
     let mut map = make_map(&mut objects);
     let mut previous_player_position = (-1, -1);
-    let mut mouse = Default::default();
     let mut key = Default::default();
 
     for y in 0..MAP_HEIGHT {
@@ -705,12 +705,12 @@ fn main() {
         let fov_recompute = previous_player_position != (objects[0].x, objects[0].y);
 
         match input::check_for_event(input::MOUSE | input::KEY_PRESS) {
-            Some((_, Event::Mouse(m))) => mouse = m,
+            Some((_, Event::Mouse(m))) => tcod.mouse = m,
             Some((_, Event::Key(k))) => key = k,
             _ => key = Default::default(),
         };
 
-        render_all(&mut tcod, &objects, &mut map, &mut messages, fov_recompute);
+        render_all(&mut tcod, &objects, &mut map, &messages, fov_recompute);
         tcod.root.flush();
         for object in &objects {
             object.clear(&mut tcod.con)
@@ -863,7 +863,7 @@ impl Tcod {
         )
     }
     pub fn inventory_menu(self: &mut Tcod, inventory: &[Object], header: &str) -> Option<usize> {
-        let options = if inventory.len() == 0 {
+        let options = if inventory.is_empty() {
             vec!["inventory is empty".into()]
         } else {
             inventory.iter().map(|item| item.name.clone()).collect()
@@ -871,7 +871,7 @@ impl Tcod {
 
         let inventory_index = self.menu(header, &options, INVENTORY_WIDTH);
 
-        if inventory.len() > 0 {
+        if inventory.is_empty() {
             inventory_index
         } else {
             None
