@@ -55,6 +55,14 @@ const COLOR_LIGHT_GROUND: Color = Color {
     b: 50,
 };
 
+struct Tcod {
+    root: Root,
+    con: Offscreen,
+    panel: Offscreen,
+    fov: FovMap,
+    mouse: Mouse,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum PlayerAction {
     TookTurn,
@@ -567,16 +575,20 @@ fn ai_take_turn(
 }
 
 fn main() {
-    let mut root = Root::initializer()
-        .font("arial10x10.png", FontLayout::Tcod)
-        .font_type(FontType::Greyscale)
-        .size(SCREEN_WIDTH, SCREEN_HEIGHT)
-        .title("Rust/libtcod tutorial")
-        .init();
-
-    let mut con = Offscreen::new(MAP_WIDTH, MAP_HEIGHT);
-    let mut panel = Offscreen::new(SCREEN_WIDTH, PANEL_HEIGHT);
     let mut messages = vec![];
+
+    let mut tcod = Tcod {
+        root: Root::initializer()
+            .font("arial10x10.png", FontLayout::Tcod)
+            .font_type(FontType::Greyscale)
+            .size(SCREEN_WIDTH, SCREEN_HEIGHT)
+            .title("Rust/libtcod tutorial")
+            .init(),
+        con: Offscreen::new(MAP_WIDTH, MAP_HEIGHT),
+        panel: Offscreen::new(SCREEN_WIDTH, PANEL_HEIGHT),
+        fov: FovMap::new(MAP_WIDTH, MAP_HEIGHT),
+        mouse: Default::default(),
+    };
 
     message(
         &mut messages,
@@ -614,9 +626,9 @@ fn main() {
         }
     }
 
-    while !root.window_closed() {
-        con.set_default_foreground(colors::WHITE);
-        root.clear();
+    while !tcod.root.window_closed() {
+        tcod.con.set_default_foreground(colors::WHITE);
+        tcod.root.clear();
 
         let fov_recompute = previous_player_position != (objects[0].x, objects[0].y);
 
@@ -626,31 +638,21 @@ fn main() {
             _ => key = Default::default(),
         };
 
-        render_all(
-            &mut root,
-            &mut con,
-            mouse,
-            &mut panel,
-            &objects,
-            &mut map,
-            &mut messages,
-            &mut fov_map,
-            fov_recompute,
-        );
-        root.flush();
+        render_all(&mut tcod, &objects, &mut map, &mut messages, fov_recompute);
+        tcod.root.flush();
         for object in &objects {
-            object.clear(&mut con)
+            object.clear(&mut tcod.con)
         }
         let player = &mut objects[0];
 
         previous_player_position = (player.x, player.y);
         let player_action = handle_keys(
             key,
-            &mut root,
+            &mut tcod,
             &map,
-            &mut messages,
             &mut objects,
             &mut inventory,
+            &mut messages,
         );
         if player_action == PlayerAction::Exit {
             break;
@@ -785,11 +787,11 @@ fn use_item(
 
 fn handle_keys(
     key: Key,
-    root: &mut Root,
+    tcod: &mut Tcod,
     map: &Map,
-    messages: &mut Messages,
     objects: &mut Vec<Object>,
     inventory: &mut Vec<Object>,
+    messages: &mut Messages,
 ) -> PlayerAction {
     let player_alive = objects[PLAYER].alive;
     match (key, player_alive) {
@@ -813,7 +815,7 @@ fn handle_keys(
             let inventory_index = inventory_menu(
                 inventory,
                 "Press the key next to an item to use it, or any other to cancel.\n",
-                root,
+                &mut tcod.root,
             );
             if let Some(inventory_index) = inventory_index {
                 use_item(inventory_index, inventory, objects, messages);
@@ -838,8 +840,8 @@ fn handle_keys(
             },
             _,
         ) => {
-            let fullscreen = root.is_fullscreen();
-            root.set_fullscreen(!fullscreen);
+            let fullscreen = tcod.root.is_fullscreen();
+            tcod.root.set_fullscreen(!fullscreen);
             DidntTakeTurn
         }
         (Key { code: Escape, .. }, _) => Exit,
@@ -882,35 +884,32 @@ fn render_bar(
 }
 
 fn render_all(
-    root: &mut Root,
-    con: &mut Offscreen,
-    mouse: Mouse,
-    panel: &mut Offscreen,
+    tcod: &mut Tcod,
     objects: &[Object],
     map: &mut Map,
     messages: &Messages,
-    fov_map: &mut FovMap,
     fov_recompute: bool,
 ) {
     if fov_recompute {
         let player = &objects[0];
-        fov_map.compute_fov(player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO)
+        tcod.fov
+            .compute_fov(player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO)
     }
     let mut to_draw: Vec<_> = objects
         .iter()
-        .filter(|o| fov_map.is_in_fov(o.x, o.y))
+        .filter(|o| tcod.fov.is_in_fov(o.x, o.y))
         .collect();
 
     to_draw.sort_by(|o1, o2| o1.blocks.cmp(&o2.blocks));
 
     for object in &to_draw {
-        object.draw(con);
+        object.draw(&mut tcod.con);
     }
 
     // go through all tiles, and set their background color
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
-            let visible = fov_map.is_in_fov(x, y);
+            let visible = tcod.fov.is_in_fov(x, y);
             let wall = map[x as usize][y as usize].block_sight;
             let color = match (visible, wall) {
                 // outside of field of view:
@@ -929,21 +928,30 @@ fn render_all(
             }
             if *explored {
                 // show explored tiles only (any visible tile is explored already)
-                con.set_char_background(x, y, color, BackgroundFlag::Set);
+                tcod.con
+                    .set_char_background(x, y, color, BackgroundFlag::Set);
             }
         }
     }
 
-    blit(con, (0, 0), (MAP_WIDTH, MAP_HEIGHT), root, (0, 0), 1.0, 1.0);
+    blit(
+        &tcod.con,
+        (0, 0),
+        (MAP_WIDTH, MAP_HEIGHT),
+        &mut tcod.root,
+        (0, 0),
+        1.0,
+        1.0,
+    );
 
-    panel.set_default_background(colors::BLACK);
-    panel.clear();
+    tcod.panel.set_default_background(colors::BLACK);
+    tcod.panel.clear();
 
     // show the player's stats
     let hp = objects[PLAYER].fighter.map_or(0, |f| f.hp);
     let max_hp = objects[PLAYER].fighter.map_or(0, |f| f.max_hp);
     render_bar(
-        panel,
+        &mut tcod.panel,
         1,
         1,
         BAR_WIDTH,
@@ -954,34 +962,34 @@ fn render_all(
         colors::DARKER_RED,
     );
 
-    panel.set_default_foreground(colors::LIGHT_GREY);
-    panel.print_ex(
+    tcod.panel.set_default_foreground(colors::LIGHT_GREY);
+    tcod.panel.print_ex(
         1,
         0,
         BackgroundFlag::None,
         TextAlignment::Left,
-        get_names_under_mouse(mouse, objects, fov_map),
+        get_names_under_mouse(tcod.mouse, objects, &tcod.fov),
     );
 
     let mut y = MSG_HEIGHT as i32;
     for &(ref msg, color) in messages.iter().rev() {
-        let msg_height = panel.get_height_rect(MSG_X, y, MSG_WIDTH, 0, msg);
+        let msg_height = tcod.panel.get_height_rect(MSG_X, y, MSG_WIDTH, 0, msg);
         y -= msg_height;
 
         if y < 0 {
             break;
         }
 
-        panel.set_default_foreground(color);
-        panel.print_rect(MSG_X, y, MSG_WIDTH, 0, msg)
+        tcod.panel.set_default_foreground(color);
+        tcod.panel.print_rect(MSG_X, y, MSG_WIDTH, 0, msg)
     }
 
     // blit the contents of `panel` to the root console
     blit(
-        panel,
+        &tcod.panel,
         (0, 0),
         (SCREEN_WIDTH, PANEL_HEIGHT),
-        root,
+        &mut tcod.root,
         (0, PANEL_Y),
         1.0,
         1.0,
