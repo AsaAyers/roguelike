@@ -24,6 +24,8 @@ const FOV_ALGO: FovAlgorithm = FovAlgorithm::Basic;
 const FOV_LIGHT_WALLS: bool = true;
 const TORCH_RADIUS: i32 = 10;
 
+const LIGHTNING_RANGE: i32 = 5;
+const LIGHTNING_DAMAGE: i32 = 20;
 const INVENTORY_WIDTH: i32 = 50;
 const HEAL_AMOUNT: i32 = 4;
 const PLAYER: usize = 0;
@@ -125,6 +127,7 @@ struct Ai;
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Item {
     Heal,
+    Lightning,
 }
 
 enum UseResult {
@@ -320,7 +323,60 @@ fn player_move_or_attack(
     }
 }
 
-fn cast_heal(_inventory_id: usize, objects: &mut [Object], messages: &mut Messages) -> UseResult {
+fn cast_lightning(
+    _inventory_id: usize,
+    objects: &mut [Object],
+    messages: &mut Messages,
+    tcod: &mut Tcod,
+) -> UseResult {
+    // find closest enemy (inside a maximum range) and damage it
+    let monster_id = closest_monster(LIGHTNING_RANGE, objects, tcod);
+    if let Some(monster_id) = monster_id {
+        // zap it!
+        message(
+            messages,
+            format!(
+                "A lightning bolt strikes the {} with a loud thunder! \
+                 The damage is {} hit points.",
+                objects[monster_id].name, LIGHTNING_DAMAGE
+            ),
+            colors::LIGHT_BLUE,
+        );
+        objects[monster_id].take_damage(messages, LIGHTNING_DAMAGE);
+        UseResult::UsedUp
+    } else {
+        // no enemy found within maximum range
+        message(messages, "No enemy is close enough to strike.", colors::RED);
+        UseResult::Cancelled
+    }
+}
+
+fn closest_monster(max_range: i32, objects: &mut [Object], tcod: &Tcod) -> Option<usize> {
+    let mut closest_enemy = None;
+    let mut closest_dist = (max_range + 1) as f32;
+
+    for (id, object) in objects.iter().enumerate() {
+        if (id != PLAYER)
+            && object.fighter.is_some()
+            && object.ai.is_some()
+            && tcod.fov.is_in_fov(object.x, object.y)
+        {
+            let dist = objects[PLAYER].distance_to(object);
+            if dist < closest_dist {
+                closest_enemy = Some(id);
+                closest_dist = dist;
+            }
+        }
+    }
+    closest_enemy
+}
+
+fn cast_heal(
+    _inventory_id: usize,
+    objects: &mut [Object],
+    messages: &mut Messages,
+    _tcod: &mut Tcod,
+) -> UseResult {
     if let Some(fighter) = objects[PLAYER].fighter {
         if fighter.hp == fighter.max_hp {
             message(messages, "You are already at full health.", colors::RED);
@@ -479,9 +535,26 @@ fn place_objects(room: Rect, map: &Map, objects: &mut Vec<Object>) {
         let y = rand::thread_rng().gen_range(room.y1 + 1, room.y2);
 
         if !is_blocked(x, y, map, objects) {
-            let mut object = Object::new(x, y, '!', "Healing Potion", colors::VIOLET, false);
-            object.item = Some(Item::Heal);
-            objects.push(object);
+            let dice = rand::random::<f32>();
+
+            let item = if dice < 0.7 {
+                let mut object = Object::new(x, y, '!', "Healing Potion", colors::VIOLET, false);
+                object.item = Some(Item::Heal);
+                object
+            } else {
+                let mut object = Object::new(
+                    x,
+                    y,
+                    '#',
+                    "Scroll of lightning bolt",
+                    colors::LIGHT_YELLOW,
+                    false,
+                );
+                object.item = Some(Item::Lightning);
+                object
+            };
+
+            objects.push(item);
         }
     }
 }
@@ -812,15 +885,17 @@ fn use_item(
     inventory: &mut Vec<Object>,
     objects: &mut [Object],
     messages: &mut Messages,
+    tcod: &mut Tcod,
 ) {
     use Item::*;
 
     if let Some(item) = inventory[inventory_id].item {
         let on_use = match item {
             Heal => cast_heal,
+            Lightning => cast_lightning,
         };
 
-        match on_use(inventory_id, objects, messages) {
+        match on_use(inventory_id, objects, messages, tcod) {
             UseResult::UsedUp => {
                 inventory.remove(inventory_id);
             }
@@ -869,7 +944,7 @@ fn handle_keys(
                 "Press the key next to an item to use it, or any other to cancel.\n",
             );
             if let Some(inventory_index) = inventory_index {
-                use_item(inventory_index, inventory, objects, messages);
+                use_item(inventory_index, inventory, objects, messages, tcod);
             }
 
             TookTurn
