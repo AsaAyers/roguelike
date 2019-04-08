@@ -1,9 +1,11 @@
 use quicksilver::{
-    geom::{Shape, Vector},
+    geom::{Rectangle, Shape, Vector},
     graphics::{Background::Img, Color, Font, FontStyle, Image},
     lifecycle::{run, Asset, Settings, State, Window},
     Future, Result,
 };
+
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Tile {
@@ -82,6 +84,8 @@ struct Game {
     map: Vec<Tile>,
     entities: Vec<Entity>,
     player_id: usize,
+    tile_size_px: Vector,
+    tileset: Asset<HashMap<char, Image>>,
 }
 
 impl State for Game {
@@ -110,7 +114,20 @@ impl State for Game {
             hp: 3,
             max_hp: 5,
         });
-
+        let game_glyphs = "#@g.%";
+        let tile_size_px = Vector::new(12, 24);
+        let tileset = Asset::new(Font::load(font_mononoki).and_then(move |text| {
+            let tiles = text
+                .render(game_glyphs, &FontStyle::new(tile_size_px.y, Color::WHITE))
+                .expect("Could not render the font tileset.");
+            let mut tileset = HashMap::new();
+            for (index, glyph) in game_glyphs.chars().enumerate() {
+                let pos = (index as i32 * tile_size_px.x as i32, 0);
+                let tile = tiles.subimage(Rectangle::new(pos, tile_size_px));
+                tileset.insert(glyph, tile);
+            }
+            Ok(tileset)
+        }));
         Ok(Self {
             title,
             mononoki_font_info,
@@ -118,6 +135,8 @@ impl State for Game {
             map,
             entities,
             player_id,
+            tile_size_px,
+            tileset,
         })
     }
 
