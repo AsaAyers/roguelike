@@ -5,3 +5,5 @@ authors = ["Asa Ayers <Asa@AsaAyers.com>"]
 edition = "2018"
 
 [dependencies]
+# More features: "collisions", "complex_shapes", "immi_ui", "sounds", gamepads
+quicksilver = { version = "0.3.11", default-features = false, features = ["fonts", "saving"]}
