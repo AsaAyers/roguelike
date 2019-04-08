@@ -1,6 +1,9 @@
 use quicksilver::{
     geom::{Rectangle, Shape, Vector},
-    graphics::{Background::Img, Color, Font, FontStyle, Image},
+    graphics::{
+        Background::{Blended, Img},
+        Color, Font, FontStyle, Image,
+    },
     lifecycle::{run, Asset, Settings, State, Window},
     Future, Result,
 };
@@ -80,6 +83,7 @@ fn generate_map(size: Vector) -> Vec<Tile> {
 struct Game {
     title: Asset<Image>,
     mononoki_font_info: Asset<Image>,
+    square_font_info: Asset<Image>,
     map_size: Vector,
     map: Vec<Tile>,
     entities: Vec<Entity>,
@@ -92,6 +96,7 @@ impl State for Game {
     /// Load the assets and initialise the game
     fn new() -> Result<Self> {
         let font_mononoki = "mononoki-Regular.ttf";
+        let font_square = "square.ttf";
 
         let title = Asset::new(Font::load(font_mononoki).and_then(|font| {
             font.render("Quicksilver Roguelike", &FontStyle::new(72.0, Color::BLACK))
@@ -103,6 +108,14 @@ impl State for Game {
                 &FontStyle::new(20.0, Color::BLACK),
             )
         }));
+
+        let square_font_info = Asset::new(Font::load(font_mononoki).and_then(move |font| {
+            font.render(
+                "Square font by Wouter Van Oortmerssen, terms: CC BY 3.0",
+                &FontStyle::new(20.0, Color::BLACK),
+            )
+        }));
+
         let map_size = Vector::new(20, 15);
         let map = generate_map(map_size);
         let mut entities = generate_entities();
@@ -115,8 +128,8 @@ impl State for Game {
             max_hp: 5,
         });
         let game_glyphs = "#@g.%";
-        let tile_size_px = Vector::new(12, 24);
-        let tileset = Asset::new(Font::load(font_mononoki).and_then(move |text| {
+        let tile_size_px = Vector::new(24, 24);
+        let tileset = Asset::new(Font::load(font_square).and_then(move |text| {
             let tiles = text
                 .render(game_glyphs, &FontStyle::new(tile_size_px.y, Color::WHITE))
                 .expect("Could not render the font tileset.");
@@ -131,6 +144,7 @@ impl State for Game {
         Ok(Self {
             title,
             mononoki_font_info,
+            square_font_info,
             map_size,
             map,
             entities,
@@ -168,6 +182,46 @@ impl State for Game {
             );
             Ok(())
         })?;
+
+        self.square_font_info.execute(|image| {
+            window.draw(
+                &image
+                    .area()
+                    .translate((2, window.screen_size().y as i32 - 30)),
+                Img(&image),
+            );
+            Ok(())
+        })?;
+
+        let tile_size_px = self.tile_size_px;
+        let offset_px = Vector::new(50, 120);
+        let (tileset, map) = (&mut self.tileset, &self.map);
+        tileset.execute(|tileset| {
+            for tile in map.iter() {
+                if let Some(image) = tileset.get(&tile.glyph) {
+                    let pos_px = tile.pos.times(tile_size_px);
+                    window.draw(
+                        &Rectangle::new(offset_px + pos_px, image.area().size()),
+                        Blended(&image, tile.color),
+                    );
+                }
+            }
+            Ok(())
+        })?;
+        let (tileset, entities) = (&mut self.tileset, &self.entities);
+        tileset.execute(|tileset| {
+            for entity in entities.iter() {
+                if let Some(image) = tileset.get(&entity.glyph) {
+                    let pos_px = offset_px + entity.pos.times(tile_size_px);
+                    window.draw(
+                        &Rectangle::new(pos_px, image.area().size()),
+                        Blended(&image, entity.color),
+                    );
+                }
+            }
+            Ok(())
+        })?;
+
         Ok(())
     }
 }
